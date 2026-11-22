@@ -3,7 +3,8 @@ Single-Run Cloud Auto-Poster (scripts/post_one_cloud.py)
 Designed for 24/7 autonomous GitHub Actions execution.
 
 Behavior:
-1. Reconstructs secret files (.env, client_secrets.json, youtube_token.json) from env vars if present.
+1. Reconstructs secret files (.env, client_secrets.json, youtube_token.json, token.json)
+   from environment variables and sanitizes any single quotes / dirty JSON formats.
 2. Reads status.csv and finds the next clip with status 'SCHEDULED' or 'PENDING'.
 3. Uploads ONLY that 1 clip to both YouTube Shorts and Instagram Reels.
 4. Updates status.csv, final_clips/summary.json, and POSTING_STATUS.md with live URLs.
@@ -34,30 +35,53 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 
 def ensure_secret_files():
-    """Reconstructs credentials from environment variables if running in GitHub Actions."""
+    """Reconstructs and sanitizes credentials from environment variables and disk."""
+    from scripts.publish import robust_json_load
+
     env_content = os.getenv("ENV_FILE") or os.getenv("ENV_FILE_CONTENT")
     if env_content and not (WORKSPACE_DIR / ".env").exists():
         (WORKSPACE_DIR / ".env").write_text(env_content.strip() + "\n", encoding="utf-8")
         print("🔐 Reconstructed .env from GitHub Secret.")
 
     client_secrets_content = os.getenv("CLIENT_SECRETS_JSON") or os.getenv("CLIENT_SECRETS_CONTENT")
-    if client_secrets_content and not (WORKSPACE_DIR / "client_secrets.json").exists():
-        (WORKSPACE_DIR / "client_secrets.json").write_text(client_secrets_content.strip(), encoding="utf-8")
-        print("🔐 Reconstructed client_secrets.json from GitHub Secret.")
-
-    youtube_token_content = os.getenv("YOUTUBE_TOKEN_JSON") or os.getenv("TOKEN_JSON")
-    if youtube_token_content and not (WORKSPACE_DIR / "youtube_token.json").exists():
-        (WORKSPACE_DIR / "youtube_token.json").write_text(youtube_token_content.strip(), encoding="utf-8")
-        print("🔐 Reconstructed youtube_token.json from GitHub Secret.")
-
-    # Also sync token.json if youtube_token.json exists
-    yt_tok = WORKSPACE_DIR / "youtube_token.json"
-    tok = WORKSPACE_DIR / "token.json"
-    if yt_tok.exists() and not tok.exists():
+    if client_secrets_content:
         try:
-            tok.write_text(yt_tok.read_text(encoding="utf-8"), encoding="utf-8")
+            cs_data = robust_json_load(client_secrets_content)
+            clean_cs = json.dumps(cs_data, indent=2)
+            (WORKSPACE_DIR / "client_secrets.json").write_text(clean_cs, encoding="utf-8")
+            (SCRIPTS_DIR / "client_secrets.json").write_text(clean_cs, encoding="utf-8")
+            print("🔐 Reconstructed & sanitized client_secrets.json from GitHub Secret.")
+        except Exception as e:
+            print(f"⚠️ Warning reconstructing client_secrets.json: {e}")
+    elif (WORKSPACE_DIR / "client_secrets.json").exists():
+        try:
+            cs_data = robust_json_load((WORKSPACE_DIR / "client_secrets.json").read_text(encoding="utf-8"))
+            (WORKSPACE_DIR / "client_secrets.json").write_text(json.dumps(cs_data, indent=2), encoding="utf-8")
         except Exception:
             pass
+
+    youtube_token_content = os.getenv("YOUTUBE_TOKEN_JSON") or os.getenv("TOKEN_JSON")
+    if youtube_token_content:
+        try:
+            tok_data = robust_json_load(youtube_token_content)
+            clean_tok = json.dumps(tok_data, indent=2)
+            (WORKSPACE_DIR / "youtube_token.json").write_text(clean_tok, encoding="utf-8")
+            (WORKSPACE_DIR / "token.json").write_text(clean_tok, encoding="utf-8")
+            print("🔐 Reconstructed & sanitized youtube_token.json and token.json from GitHub Secret.")
+        except Exception as e:
+            print(f"⚠️ Warning reconstructing youtube_token.json: {e}")
+    else:
+        # Sanitize any existing token file on disk
+        for p in [WORKSPACE_DIR / "youtube_token.json", WORKSPACE_DIR / "token.json"]:
+            if p.exists():
+                try:
+                    tok_data = robust_json_load(p.read_text(encoding="utf-8"))
+                    clean_tok = json.dumps(tok_data, indent=2)
+                    (WORKSPACE_DIR / "youtube_token.json").write_text(clean_tok, encoding="utf-8")
+                    (WORKSPACE_DIR / "token.json").write_text(clean_tok, encoding="utf-8")
+                    break
+                except Exception:
+                    pass
 
 
 def load_status_csv() -> list:
@@ -130,7 +154,7 @@ def update_status_md(rows: list, summary_items: list = None):
         else:
             link_str = "Pending"
 
-        badge = "✅" if ov_st == "POSTED" else ("🕒" if ov_st == "SCHEDULED" else "⏳")
+        badge = "✅" if ov_st == "POSTED" else ("🕒" if ov_st == "SCHEDULED" else ("⚠️" if ov_st == "PARTIAL" else "⏳"))
         lines.append(f"| **#{idx:02d}** | `{fn}` | `{title}` | {yt_st} | {ig_st} | {link_str} | **{ov_st}** {badge} |")
 
     with open(STATUS_MD, "w", encoding="utf-8") as f:
@@ -167,10 +191,10 @@ def git_commit_and_push(idx: int, filename: str):
             subprocess.run(["git", "commit", "-m", commit_msg], check=True)
 
             print("[Git] Pulling with rebase...")
-            subprocess.run(["git", "pull", "--rebase"], check=False)
+            subprocess.run(["git", "pull", "--rebase", "origin", "main"], check=False)
 
             print("[Git] Pushing to remote branch...")
-            push_res = subprocess.run(["git", "push"], capture_output=True, text=True)
+            push_res = subprocess.run(["git", "push", "origin", "HEAD"], capture_output=True, text=True)
             if push_res.returncode == 0:
                 print("✅ [Git] Successfully pushed status updates to GitHub!")
             else:
@@ -255,10 +279,14 @@ def post_next_single_clip(dry_run: bool = False) -> bool:
     else:
         target_row["instagram_status"] = "FAILED"
 
-    if yt_success or ig_success:
+    if yt_success and ig_success:
         target_row["overall_status"] = "POSTED"
         if summary_entry:
             summary_entry["status"] = "POSTED"
+    elif yt_success or ig_success:
+        target_row["overall_status"] = "PARTIAL"
+        if summary_entry:
+            summary_entry["status"] = "PARTIAL"
     else:
         target_row["overall_status"] = "FAILED"
 
@@ -275,10 +303,10 @@ def post_next_single_clip(dry_run: bool = False) -> bool:
     print(f"  - Overall: {target_row['overall_status']}")
     print("=" * 70)
 
-    # Auto commit and push to avoid duplicate posting on subsequent GitHub Actions runs
+    # Auto commit and push
     git_commit_and_push(target_idx, filename)
 
-    return True
+    return (yt_success or ig_success)
 
 
 if __name__ == "__main__":
