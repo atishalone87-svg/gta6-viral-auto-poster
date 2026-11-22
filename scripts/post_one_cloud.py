@@ -4,12 +4,13 @@ Designed for 24/7 autonomous GitHub Actions execution.
 
 Behavior:
 1. Reconstructs secret files (.env, client_secrets.json, youtube_token.json, token.json)
-   from environment variables and sanitizes any single quotes / dirty JSON formats.
+   from environment variables and sanitizes any single quotes / dirty JSON formats / datetime objects.
 2. Reads status.csv and finds the next clip with status 'SCHEDULED' or 'PENDING'.
-3. Uploads ONLY that 1 clip to both YouTube Shorts and Instagram Reels.
-4. Updates status.csv, final_clips/summary.json, and POSTING_STATUS.md with live URLs.
-5. Auto-commits and pushes the updated status files back to the GitHub repository.
-6. Exits cleanly with status code 0.
+3. Uploads that clip to YouTube Shorts and Instagram Reels.
+4. Marks clip as POSTED if YouTube (or Instagram) succeeds, advancing the queue.
+5. Updates status.csv, final_clips/summary.json, and POSTING_STATUS.md with live URLs.
+6. Auto-commits and pushes the updated status files back to the GitHub repository.
+7. Exits cleanly with status code 0.
 """
 
 import os
@@ -282,24 +283,19 @@ def post_next_single_clip(dry_run: bool = False) -> bool:
     else:
         target_row["instagram_status"] = "FAILED"
 
-    if yt_success and ig_success:
+    # If YouTube succeeds (even while Instagram is blocked), mark as POSTED to advance queue!
+    if yt_success or ig_success:
         target_row["overall_status"] = "POSTED"
         if summary_entry:
             summary_entry["status"] = "POSTED"
-    elif yt_success or ig_success:
-        target_row["overall_status"] = "POSTED"
-        if summary_entry:
-            summary_entry["status"] = "POSTED"
+        print(f"\n✅ [Auto-Poster] Clip #{target_idx:02d} successfully posted (YouTube: {target_row['youtube_status']}, Instagram: {target_row['instagram_status']})!")
     else:
-        # If neither platform succeeded, KEEP clip as SCHEDULED so it stays in queue
-        # and is not permanently skipped on subsequent runs!
         target_row["overall_status"] = "SCHEDULED"
         target_row["youtube_status"] = "SCHEDULED"
         target_row["instagram_status"] = "SCHEDULED"
         if summary_entry:
             summary_entry["status"] = "SCHEDULED"
-        print(f"\n⚠️ [Auto-Poster] Upload failed on both platforms for Clip #{target_idx:02d}.")
-        print("Retaining SCHEDULED status in queue for next scheduled run.")
+        print(f"\n⚠️ [Auto-Poster] Both uploads failed for Clip #{target_idx:02d}. Retaining SCHEDULED status.")
 
     # Save tracking files
     save_status_csv(rows)
