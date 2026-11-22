@@ -1,0 +1,36 @@
+name: Auto Post Clips
+on:
+  schedule:
+    - cron: '0 */3 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt || pip install google-api-python-client google-auth-oauthlib requests python-dotenv
+      - name: Restore secrets
+        run: |
+          printf '%s' "${{ secrets.ENV_FILE }}" > .env
+          printf '%s' "${{ secrets.CLIENT_SECRETS_JSON }}" > client_secrets.json
+          printf '%s' "${{ secrets.YOUTUBE_TOKEN_JSON }}" > token.json
+      - name: Post next pending clip
+        run: |
+          python scripts/post_one_cloud.py
+      - name: Save posting status
+        if: always()
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add status.csv POSTING_STATUS.md final_clips/summary.json 2>/dev/null || true
+          if ! git diff --staged --quiet; then
+            git commit -m "Auto-update posting status [skip ci]"
+            git push
+          fi
