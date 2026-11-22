@@ -1,0 +1,77 @@
+name: 24/7 Cloud Auto-Post Reels & Shorts
+
+on:
+  schedule:
+    # Runs every 3 hours (UTC: 00:00, 03:00, 06:00, 09:00, 12:00, 15:00, 18:00, 21:00)
+    - cron: '0 */3 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Simulate without uploading (dry run)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  publish_clip:
+    name: Publish Next Pending Clip
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          cache-dependency-path: 'requirements.txt'
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install requests python-dotenv google-api-python-client google-auth-oauthlib google-auth-httplib2
+          fi
+
+      - name: Inject Credentials from GitHub Secrets
+        env:
+          ENV_SECRET: ${{ secrets.ENV_FILE }}
+          CLIENT_SECRETS: ${{ secrets.CLIENT_SECRETS_JSON }}
+          YOUTUBE_TOKEN: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+        run: |
+          echo "$ENV_SECRET" > .env
+          echo "$CLIENT_SECRETS" > client_secrets.json
+          echo "$YOUTUBE_TOKEN" > youtube_token.json
+          cp youtube_token.json token.json
+
+      - name: Execute Cloud Auto-Poster
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            python scripts/post_one_cloud.py --dry-run
+          else
+            python scripts/post_one_cloud.py
+          fi
+
+      - name: Verify and Push Status Updates
+        if: always()
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add status.csv POSTING_STATUS.md final_clips/summary.json 2>/dev/null || true
+          if ! git diff --staged --quiet; then
+            git commit -m "Auto-update posting status [skip ci]"
+            git pull --rebase origin main || git pull --rebase origin master || true
+            git push origin HEAD || true
+          fi

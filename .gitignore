@@ -1,0 +1,39 @@
+# ==========================================
+# Sensitive Credentials & Secrets (NEVER COMMIT)
+# ==========================================
+.env
+*.env
+client_secrets.json
+scripts/client_secrets.json
+youtube_token.json
+token.json
+*.docx
+*.pem
+*.key
+
+# ==========================================
+# Python Environments & Cache
+# ==========================================
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# ==========================================
+# Already Published Clips (Save Cloud Storage/Bandwidth)
+# ==========================================
+final_clips/clip_01.mp4
+final_clips/clip_02.mp4
+
+# ==========================================
+# Large Raw Media, Temp & Heavy Web Submodules
+# ==========================================
+temp_work/
+output/
+input/
+.agent/
+clips-studio/
+node_modules/
