@@ -55,7 +55,8 @@ def ensure_secret_files():
             print(f"⚠️ Warning reconstructing client_secrets.json: {e}")
     elif (WORKSPACE_DIR / "client_secrets.json").exists():
         try:
-            cs_data = robust_json_load((WORKSPACE_DIR / "client_secrets.json").read_text(encoding="utf-8"))
+            raw_cs = (WORKSPACE_DIR / "client_secrets.json").read_text(encoding="utf-8")
+            cs_data = robust_json_load(raw_cs)
             (WORKSPACE_DIR / "client_secrets.json").write_text(json.dumps(cs_data, indent=2), encoding="utf-8")
         except Exception:
             pass
@@ -69,19 +70,21 @@ def ensure_secret_files():
             (WORKSPACE_DIR / "token.json").write_text(clean_tok, encoding="utf-8")
             print("🔐 Reconstructed & sanitized youtube_token.json and token.json from GitHub Secret.")
         except Exception as e:
-            print(f"⚠️ Warning reconstructing youtube_token.json: {e}")
+            print(f"⚠️ Warning reconstructing youtube_token.json from env: {e}")
     else:
-        # Sanitize any existing token file on disk
+        # Sanitize any existing token file on disk (e.g. written by CI printf)
         for p in [WORKSPACE_DIR / "youtube_token.json", WORKSPACE_DIR / "token.json"]:
             if p.exists():
                 try:
-                    tok_data = robust_json_load(p.read_text(encoding="utf-8"))
+                    raw_tok = p.read_text(encoding="utf-8")
+                    tok_data = robust_json_load(raw_tok)
                     clean_tok = json.dumps(tok_data, indent=2)
                     (WORKSPACE_DIR / "youtube_token.json").write_text(clean_tok, encoding="utf-8")
                     (WORKSPACE_DIR / "token.json").write_text(clean_tok, encoding="utf-8")
+                    print(f"🔐 Sanitized {p.name} on disk and synced to token.json & youtube_token.json.")
                     break
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"⚠️ Warning parsing {p.name} on disk: {e}")
 
 
 def load_status_csv() -> list:
@@ -284,11 +287,19 @@ def post_next_single_clip(dry_run: bool = False) -> bool:
         if summary_entry:
             summary_entry["status"] = "POSTED"
     elif yt_success or ig_success:
-        target_row["overall_status"] = "PARTIAL"
+        target_row["overall_status"] = "POSTED"
         if summary_entry:
-            summary_entry["status"] = "PARTIAL"
+            summary_entry["status"] = "POSTED"
     else:
-        target_row["overall_status"] = "FAILED"
+        # If neither platform succeeded, KEEP clip as SCHEDULED so it stays in queue
+        # and is not permanently skipped on subsequent runs!
+        target_row["overall_status"] = "SCHEDULED"
+        target_row["youtube_status"] = "SCHEDULED"
+        target_row["instagram_status"] = "SCHEDULED"
+        if summary_entry:
+            summary_entry["status"] = "SCHEDULED"
+        print(f"\n⚠️ [Auto-Poster] Upload failed on both platforms for Clip #{target_idx:02d}.")
+        print("Retaining SCHEDULED status in queue for next scheduled run.")
 
     # Save tracking files
     save_status_csv(rows)
@@ -303,8 +314,9 @@ def post_next_single_clip(dry_run: bool = False) -> bool:
     print(f"  - Overall: {target_row['overall_status']}")
     print("=" * 70)
 
-    # Auto commit and push
-    git_commit_and_push(target_idx, filename)
+    # Only commit and push if at least one upload succeeded
+    if yt_success or ig_success:
+        git_commit_and_push(target_idx, filename)
 
     return (yt_success or ig_success)
 

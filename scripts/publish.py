@@ -30,9 +30,13 @@ YOUTUBE_SCOPES = [
 
 def robust_json_load(raw_input):
     """
-    Safely parses JSON or Python dictionary text even if it was saved with single quotes,
-    Python dict representation (e.g. {'token': ...}), markdown codeblocks, UTF-8 BOM,
-    or extra wrapping quotes. Returns a dict or raises ValueError.
+    Safely parses JSON, YAML, or loose Python dictionary text even if it was saved with:
+    - Single quotes
+    - Unquoted keys/values (e.g. {token: ya29..., refresh_token: 1//...})
+    - Markdown codeblocks (```json ... ```)
+    - UTF-8 BOM
+    - Extra wrapping quotes
+    Returns a dict or raises ValueError.
     """
     if not raw_input:
         return None
@@ -45,7 +49,7 @@ def robust_json_load(raw_input):
     if content.startswith("\ufeff"):
         content = content[1:].strip()
 
-    # Strip markdown code blocks (```json ... ```)
+    # Strip markdown code blocks (```json ... ``` or ``` ... ```)
     if content.startswith("```"):
         lines = content.splitlines()
         if lines and lines[0].startswith("```"):
@@ -67,7 +71,6 @@ def robust_json_load(raw_input):
         if isinstance(data, dict):
             return data
         if isinstance(data, str):
-            # Double-stringified JSON
             inner = json.loads(data)
             if isinstance(inner, dict):
                 return inner
@@ -82,13 +85,48 @@ def robust_json_load(raw_input):
     except Exception:
         pass
 
-    # Attempt 3: Regex single quote substitution
+    # Attempt 3: YAML safe load (handles unquoted keys and unquoted strings like {token: ya29..., refresh_token: ...})
+    try:
+        import yaml
+        data = yaml.safe_load(content)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+
+    # Attempt 4: Regex single quote substitution
     try:
         fixed = re.sub(r"'([^'\\]*(?:\\.[^'\\]*)*)'", r'"\1"', content)
         fixed = fixed.replace("True", "true").replace("False", "false").replace("None", "null")
         data = json.loads(fixed)
         if isinstance(data, dict):
             return data
+    except Exception:
+        pass
+
+    # Attempt 5: Pure Python loose dictionary parser (regex extractor for key: value pairs)
+    try:
+        clean = content.strip()
+        if clean.startswith("{") and clean.endswith("}"):
+            clean = clean[1:-1].strip()
+        result = {}
+        pattern = r'(\w+)\s*:\s*(\[[^\]]*\]|[^,\n\r]+)'
+        for m in re.finditer(pattern, clean):
+            k = m.group(1).strip().strip("\"'")
+            v = m.group(2).strip().strip("\"'")
+            if v.startswith("[") and v.endswith("]"):
+                items = [x.strip().strip("\"'") for x in v[1:-1].split(",") if x.strip()]
+                result[k] = items
+            elif v.lower() == "true":
+                result[k] = True
+            elif v.lower() == "false":
+                result[k] = False
+            elif v.lower() in ["none", "null"]:
+                result[k] = None
+            else:
+                result[k] = v
+        if result and any(key in result for key in ["token", "refresh_token", "client_id", "installed"]):
+            return result
     except Exception:
         pass
 
@@ -185,8 +223,16 @@ def get_youtube_service():
                 raw_text = p.read_text(encoding="utf-8")
                 token_data = robust_json_load(raw_text)
                 if token_data and isinstance(token_data, dict):
-                    # Normalize back into clean JSON on disk
-                    p.write_text(json.dumps(token_data, indent=2), encoding="utf-8")
+                    # Rewrite as clean standard JSON
+                    clean_str = json.dumps(token_data, indent=2)
+                    p.write_text(clean_str, encoding="utf-8")
+                    # Sync to other paths
+                    for other in [WORKSPACE_DIR / "youtube_token.json", WORKSPACE_DIR / "token.json"]:
+                        if other != p:
+                            try:
+                                other.write_text(clean_str, encoding="utf-8")
+                            except Exception:
+                                pass
                     break
             except Exception as e:
                 print(f"[YouTube] Notice reading {p.name}: {e}")
@@ -197,6 +243,13 @@ def get_youtube_service():
         if env_token:
             try:
                 token_data = robust_json_load(env_token)
+                if token_data and isinstance(token_data, dict):
+                    clean_str = json.dumps(token_data, indent=2)
+                    for p in [WORKSPACE_DIR / "youtube_token.json", WORKSPACE_DIR / "token.json"]:
+                        try:
+                            p.write_text(clean_str, encoding="utf-8")
+                        except Exception:
+                            pass
             except Exception as e:
                 print(f"[YouTube] Notice reading YOUTUBE_TOKEN_JSON env: {e}")
 
@@ -382,7 +435,10 @@ def upload_instagram_reel(
                 container_id = r1.json().get("id")
                 print(f"[Instagram] Container created via video_url (ID: {container_id})")
             else:
-                print(f"[Instagram] video_url init notice ({r1.status_code}): {r1.text}. Falling back to binary...")
+                err_text = r1.text
+                if "5258005" in err_text or "API access blocked" in err_text:
+                    print(f"[Instagram] ⚠️ Meta API access blocked (error 5258005). App/portfolio needs review in Meta Business Suite.")
+                print(f"[Instagram] video_url init notice ({r1.status_code}): {err_text}. Falling back to binary...")
         except Exception as e:
             print(f"[Instagram] video_url error: {e}. Falling back to binary...")
 
@@ -398,7 +454,13 @@ def upload_instagram_reel(
         }
         r1 = requests.post(init_url, data=init_params, timeout=30)
         if r1.status_code != 200:
-            return {"status": "error", "message": f"Init failed: {r1.text}"}
+            err_text = r1.text
+            if "5258005" in err_text or "API access blocked" in err_text:
+                return {
+                    "status": "error",
+                    "message": "Meta API access blocked (error_subcode 5258005). Meta Business Suite me portfolio admin status verify karna hoga."
+                }
+            return {"status": "error", "message": f"Init failed: {err_text}"}
 
         container_id = r1.json().get("id")
         upload_url = r1.json().get("uri")
