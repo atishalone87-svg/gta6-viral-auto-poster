@@ -37,3 +37,4 @@ input/
 .agent/
 clips-studio/
 node_modules/
+push_to_github.bat
