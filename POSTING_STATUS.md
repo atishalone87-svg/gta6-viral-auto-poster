@@ -9,6 +9,6 @@
 | **#05** | `clip_05.mp4` | `IMPOSSIBLE GTA 6 ESCAPE! 🔥` | POSTED | FAILED | [YouTube Short](https://youtube.com/shorts/NPlzFZiGdMc) | **POSTED** ✅ |
 | **#06** | `clip_06.mp4` | `INTENSE GTA 6 GUNFIGHT! 🔫` | POSTED | FAILED | [YouTube Short](https://youtube.com/shorts/Cn_so6UWpTA) | **POSTED** ✅ |
 | **#07** | `clip_07.mp4` | `WORST GTA 6 STUNT FAIL! 💀` | POSTED | FAILED | [YouTube Short](https://youtube.com/shorts/4eFFNSdoZN4) | **POSTED** ✅ |
-| **#08** | `clip_08.mp4` | `ATTACK CHOPPER SURVIVAL! 🚁` | SCHEDULED | SCHEDULED | Auto-Scheduler Queue | **SCHEDULED** 🕒 |
+| **#08** | `clip_08.mp4` | `ATTACK CHOPPER SURVIVAL! 🚁` | POSTED | FAILED | [YouTube Short](https://youtube.com/shorts/UClgPK60E2w) | **POSTED** ✅ |
 | **#09** | `clip_09.mp4` | `MISSION PASSED CELEBRATION! 🎉` | SCHEDULED | SCHEDULED | Auto-Scheduler Queue | **SCHEDULED** 🕒 |
 | **#10** | `clip_10.mp4` | `GTA 6 PURE OPENING CHAOS! ⚡` | SCHEDULED | SCHEDULED | Auto-Scheduler Queue | **SCHEDULED** 🕒 |
